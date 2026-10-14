@@ -10,10 +10,21 @@
 
 import Foundation
 import AppIntents
+import WidgetKit
+
+private let widgetGroupId = "group.xyz.superbart.xdyou"
+private let isTomorrowKey = "IsTomorrow"
 
 @available(iOS 17.0, macOS 13.0, tvOS 17.0, watchOS 10.0, *)
 struct IsTomorrowManager {
-    static var value = false
+    private static var defaults: UserDefaults? {
+        UserDefaults(suiteName: widgetGroupId)
+    }
+
+    static var value: Bool {
+        get { defaults?.bool(forKey: isTomorrowKey) ?? false }
+        set { defaults?.set(newValue, forKey: isTomorrowKey) }
+    }
 }
 
 @available(iOS 17.0, macOS 13.0, tvOS 17.0, watchOS 10.0, *)
@@ -26,6 +37,7 @@ struct IsTomorrowIntent: AppIntent {
     
     func perform() async throws -> some IntentResult {
         IsTomorrowManager.value = !IsTomorrowManager.value
+        WidgetCenter.shared.reloadTimelines(ofKind: "ClasstableWidget")
         return .result()
     }
 }

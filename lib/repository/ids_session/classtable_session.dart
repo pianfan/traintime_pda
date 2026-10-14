@@ -21,6 +21,7 @@ import 'package:watermeter/repository/preference.dart' as pref;
 import 'package:watermeter/model/xidian_ids/classtable.dart';
 import 'package:watermeter/repository/ids_session/ids_session.dart';
 import 'package:watermeter/repository/single_flight.dart';
+import 'package:watermeter/repository/widget_state_sync.dart';
 
 enum ClasstableCacheHint implements CacheHint {
   passwordWrong,
@@ -95,6 +96,7 @@ class ClassTableSession extends IDSSession {
         log.handle(e, s);
       }
     }
+    await reloadClassTableWidget();
   }
 
   (DateTime, ClassTableData)? getCache() {
@@ -191,7 +193,7 @@ class ClassTableSession extends IDSSession {
         : rawCalendar;
 
     final termStartDay = DateFormat(
-      "yyyy-MM-dd hh:mm:ss",
+      "yyyy-MM-dd HH:mm:ss",
     ).format(DateTime.parse(calendar['QSRQ'] as String));
 
     Map<String, dynamic> data = await dio

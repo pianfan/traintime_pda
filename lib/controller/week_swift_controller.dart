@@ -8,12 +8,15 @@ import 'package:signals/signals.dart';
 import 'package:watermeter/controller/semester_controller.dart';
 import 'package:watermeter/repository/logger.dart';
 import 'package:watermeter/repository/preference.dart' as preference;
+import 'package:watermeter/repository/widget_state_sync.dart';
 
 class WeekSwiftController {
   static final WeekSwiftController i = WeekSwiftController._();
 
   WeekSwiftController._() {
     _initEffects();
+    // Ensure App Group has the persisted preference on cold start.
+    _syncWeekSwiftToWidget(weekSwiftSignal.value);
   }
 
   final weekSwiftSignal = signal<int>(
@@ -41,28 +44,33 @@ class WeekSwiftController {
   void refresh() async {
     final latest = preference.getInt(preference.Preference.swift);
     weekSwiftSignal.value = latest;
+    await _syncWeekSwiftToWidget(latest);
+  }
+
+  Future<void> _syncWeekSwiftToWidget(int value) async {
+    if (!Platform.isIOS) return;
+    final api = SaveToGroupIdSwiftApi();
+    try {
+      final result = await api.saveToGroupId(
+        FileToGroupID(
+          appid: preference.appId,
+          fileName: "WeekSwift.txt",
+          data: value.toString(),
+        ),
+      );
+      log.info(
+        "[WeekSwiftController][_syncWeekSwiftToWidget] "
+        "ios Save to public place status: $result.",
+      );
+      await reloadClassTableWidget();
+    } catch (e, s) {
+      log.handle(e, s);
+    }
   }
 
   Future<int> setWeekSwift(int value) async {
     await preference.setInt(preference.Preference.swift, value);
-    if (Platform.isIOS) {
-      final api = SaveToGroupIdSwiftApi();
-      try {
-        final result = await api.saveToGroupId(
-          FileToGroupID(
-            appid: preference.appId,
-            fileName: "WeekSwift.txt",
-            data: value.toString(),
-          ),
-        );
-        log.info(
-          "[WeekSwiftController][setWeekSwift] "
-          "ios Save to public place status: $result.",
-        );
-      } catch (e, s) {
-        log.handle(e, s);
-      }
-    }
+    await _syncWeekSwiftToWidget(value);
     weekSwiftSignal.value = value;
     log.info(
       "[WeekSwiftController][setWeekSwift] Update week swift to $value.",

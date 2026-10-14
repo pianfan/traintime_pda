@@ -81,7 +81,13 @@ struct Provider: TimelineProvider {
     func getSnapshot(in context: Context, completion: @escaping (SimpleEntry) -> ()) {
         print("getSnapshot")
         getTimeline(in: context, completion: { (timeLine) in
-            completion(timeLine.entries.first!)
+            completion(timeLine.entries.first ?? SimpleEntry(
+                date: Date(),
+                currentWeek: -1,
+                arrangement: [],
+                errorType: .others,
+                error: "Empty timeline"
+            ))
         })
     }
 
@@ -93,18 +99,34 @@ struct Provider: TimelineProvider {
         var currentWeekToStore = -1
         let calendar = Calendar.current
         if #available(iOSApplicationExtension 17.0, *), IsTomorrowManager.value {
-            day = calendar.date(byAdding: .day, value: 1, to: day)!
+            day = calendar.date(byAdding: .day, value: 1, to: day) ?? day
         }
         
         // Initalize json decoder and date formatter
         let decoder = JSONDecoder()
         let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        dateFormatter.calendar = Calendar(identifier: .gregorian)
+        dateFormatter.timeZone = .current
         dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         
         // Get content from widget group id
-        let containerURL = FileManager.default.containerURL(
+        guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: widgetGroupId
-        )!
+        ) else {
+            logger.error("Could not resolve App Group container URL")
+            let entries = [
+                SimpleEntry(
+                    date: Date(),
+                    currentWeek: -1,
+                    arrangement: [],
+                    errorType: .others,
+                    error: "App Group unavailable"
+                )
+            ]
+            completion(Timeline(entries: entries, policy: .atEnd))
+            return
+        }
 
         // Check login state first
         do {
@@ -151,10 +173,13 @@ struct Provider: TimelineProvider {
             let jsonData = try Data(contentsOf: fileURL)
             let classData : ClassTableData = try decoder.decode(ClassTableData.self, from: jsonData)
 
-            // Fetch start day
-            guard var startDay = dateFormatter.date(from: classData.termStartDay) else {
+            // Fetch start day — normalize to start-of-day so HH/hh cache quirks
+            // cannot shift the week index around noon.
+            guard let parsedStartDay = dateFormatter.date(from: classData.termStartDay) else {
                 throw StartDayFetchError()
             }
+            var startDay = calendar.startOfDay(for: parsedStartDay)
+            let dayStart = calendar.startOfDay(for: day)
             logger.info("Term start day is \(startDay)")
             
             // Add start day with swift
@@ -164,7 +189,7 @@ struct Provider: TimelineProvider {
                     contentsOf: containerURL.appendingPathComponent(swiftFile),
                     encoding: .utf8
                 )
-                weekSwift = Int(swiftData) ?? 0
+                weekSwift = Int(swiftData.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
             } catch {
                 logger.warning("Could not fetch week swift, set to 0 by default. Error detail: \(String(describing: error))")
             }
@@ -172,11 +197,14 @@ struct Provider: TimelineProvider {
 
             var dateComponent = DateComponents()
             dateComponent.day = 7 * weekSwift
-            startDay = Calendar.current.date(byAdding: dateComponent, to: startDay)!
+            guard let shiftedStart = calendar.date(byAdding: dateComponent, to: startDay) else {
+                throw StartDayFetchError()
+            }
+            startDay = shiftedStart
 
             // Current week and others
-            let components = calendar.dateComponents([.day], from: startDay, to: day)
-            var delta = components.day!
+            let components = calendar.dateComponents([.day], from: startDay, to: dayStart)
+            var delta = components.day ?? -7
             if delta < 0 {
                 delta = -7
             }
@@ -194,25 +222,41 @@ struct Provider: TimelineProvider {
                 currentWeekToStore = currentWeek
                 for i in classData.timeArrangement {
                     if i.week_list.count > currentWeek && i.week_list[currentWeek] && i.day == dayInWeek {
-                        let startData = TimeInt[(i.start - 1) * 2]
-                        let stopData = TimeInt[(i.stop - 1) * 2 + 1]
+                        let startIndex = (i.start - 1) * 2
+                        let stopIndex = (i.stop - 1) * 2 + 1
+                        guard startIndex >= 0, stopIndex >= 0,
+                              startIndex < TimeInt.count, stopIndex < TimeInt.count else {
+                            logger.warning("Skipping invalid time arrangement start/stop")
+                            continue
+                        }
+                        if i.source == .school &&
+                            (i.index < 0 || i.index >= classData.classDetail.count) {
+                            logger.warning("Skipping invalid classDetail index \(i.index)")
+                            continue
+                        }
+                        let startData = TimeInt[startIndex]
+                        let stopData = TimeInt[stopIndex]
+                        guard let startTime = calendar.date(
+                                bySettingHour: startData.0,
+                                minute: startData.1,
+                                second: 0,
+                                of: day
+                              ),
+                              let endTime = calendar.date(
+                                bySettingHour: stopData.0,
+                                minute: stopData.1,
+                                second: 0,
+                                of: day
+                              ) else {
+                            continue
+                        }
                         arrangement.append(TimeLineStructItems(
                             type: .course,
                             name: classData.getClassName(t: i),
                             teacher: i.teacher ?? "未知老师",
                             place: i.classroom ?? "未安排教室",
-                            start_time: calendar.date(
-                                bySettingHour: startData.0,
-                                minute: startData.1,
-                                second: 0,
-                                of: day
-                            )!,
-                            end_time: calendar.date(
-                                bySettingHour: stopData.0,
-                                minute: stopData.1,
-                                second: 0,
-                                of: day
-                            )!,
+                            start_time: startTime,
+                            end_time: endTime,
                             colorIndex: i.index
                         ))
                     }
@@ -275,47 +319,37 @@ struct Provider: TimelineProvider {
             logger.error("Fetch custom class error: \(String(describing: error))")
         }
 
-        // Deal with exam data
+        // Deal with exam data (optional — missing file should not hide courses)
         do {
-            // Read data
             logger.info("Getting exam data...")
             let fileURL = containerURL.appendingPathComponent(examFile)
-            let jsonData = try Data(contentsOf: fileURL)
-            let examData : ExamData = try decoder.decode(ExamData.self, from: jsonData)
-            
-            let components = calendar.dateComponents([.day,.month,.year], from: day)
-            let day = components.day
-            let month = components.month
-            let year = components.year
-            
-            for i in examData.subject {
-                let thisDay = calendar.dateComponents([.day,.month,.year],from: i.startTime)
-                if thisDay.year == year && thisDay.month == month && thisDay.day == day {
-                    arrangement.append(TimeLineStructItems(
-                        type: .exam,
-                        name: i.subject,
-                        teacher: i.place,
-                        place: String(i.seat ?? ""),
-                        start_time: i.startTime,
-                        end_time: i.endTime,
-                        colorIndex: examData.subject.firstIndex(where: {$0 === i}) ?? 0
-                    ))
+            if let jsonData = try? Data(contentsOf: fileURL) {
+                let examData : ExamData = try decoder.decode(ExamData.self, from: jsonData)
+                
+                let components = calendar.dateComponents([.day,.month,.year], from: day)
+                let dayComp = components.day
+                let monthComp = components.month
+                let yearComp = components.year
+                
+                for (index, i) in examData.subject.enumerated() {
+                    let thisDay = calendar.dateComponents([.day,.month,.year],from: i.startTime)
+                    if thisDay.year == yearComp && thisDay.month == monthComp && thisDay.day == dayComp {
+                        arrangement.append(TimeLineStructItems(
+                            type: .exam,
+                            name: i.subject,
+                            teacher: i.place,
+                            place: String(i.seat ?? ""),
+                            start_time: i.startTime,
+                            end_time: i.endTime,
+                            colorIndex: index
+                        ))
+                    }
                 }
+            } else {
+                logger.warning("No exam data file, will ignore it")
             }
         } catch {
             logger.error("Fetch exam error: \(String(describing: error))")
-            let entries = [
-                SimpleEntry(
-                    date: Date(),
-                    currentWeek: currentWeekToStore,
-                    arrangement: [],
-                    errorType: .exam,
-                    error: String(describing: error)
-                )
-            ]
-            let timeline = Timeline(entries: entries, policy: .atEnd)
-            completion(timeline)
-            return
         }
         
         // Deal with other experiment data
@@ -331,7 +365,7 @@ struct Provider: TimelineProvider {
                 let month = components.month
                 let year = components.year
                 
-                for i in experimentData {
+                for (index, i) in experimentData.enumerated() {
                     for timeRange in i.timeRanges {
                         let thisDay = calendar.dateComponents([.day,.month,.year], from: timeRange.0)
                         if thisDay.year == year && thisDay.month == month && thisDay.day == day {
@@ -342,7 +376,7 @@ struct Provider: TimelineProvider {
                                 place: i.classroom,
                                 start_time: timeRange.0,
                                 end_time: timeRange.1,
-                                colorIndex: experimentData.firstIndex(where: {$0 === i}) ?? 0
+                                colorIndex: index
                             ))
                         }
                     }
@@ -352,19 +386,6 @@ struct Provider: TimelineProvider {
             }
         } catch {
             logger.error("Fetch other experiment error: \(String(describing: error))")
-            let entries = [
-                SimpleEntry(
-                    date: Date(),
-                    currentWeek: currentWeekToStore,
-                    arrangement: [],
-                    errorType: .experiment,
-                    error: String(describing: error)
-                )
-            ]
-            let timeline = Timeline(entries: entries, policy: .atEnd)
-            completion(timeline)
-            return
-
         }
         
         // Deal with physics experiment data
@@ -380,7 +401,7 @@ struct Provider: TimelineProvider {
                 let month = components.month
                 let year = components.year
                 
-                for i in experimentData {
+                for (index, i) in experimentData.enumerated() {
                     for timeRange in i.timeRanges {
                         let thisDay = calendar.dateComponents([.day,.month,.year], from: timeRange.0)
                         if thisDay.year == year && thisDay.month == month && thisDay.day == day {
@@ -391,7 +412,7 @@ struct Provider: TimelineProvider {
                                 place: i.classroom,
                                 start_time: timeRange.0,
                                 end_time: timeRange.1,
-                                colorIndex: experimentData.firstIndex(where: {$0 === i}) ?? 0
+                                colorIndex: index
                             ))
                         }
                     }
@@ -401,19 +422,6 @@ struct Provider: TimelineProvider {
             }
         } catch {
             logger.error("Fetch physics experiment error: \(String(describing: error))")
-            let entries = [
-                SimpleEntry(
-                    date: Date(),
-                    currentWeek: currentWeekToStore,
-                    arrangement: [],
-                    errorType: .experiment,
-                    error: String(describing: error)
-                )
-            ]
-            let timeline = Timeline(entries: entries, policy: .atEnd)
-            completion(timeline)
-            return
-
         }
         
         // Order
@@ -427,10 +435,11 @@ struct Provider: TimelineProvider {
             entryDates.insert(todayItem.start_time)
             entryDates.insert(todayItem.end_time)
         }
+        let now = Date()
         if #available(iOSApplicationExtension 17.0, *), IsTomorrowManager.value == true {
             logger.info("User wants tomorrow's arrangements")
             entries.append(SimpleEntry(
-                date: Date(),
+                date: now,
                 currentWeek: currentWeekToStore,
                 arrangement: arrangement,
                 errorType: .none,
@@ -439,31 +448,43 @@ struct Provider: TimelineProvider {
         } else if arrangement.isEmpty {
             logger.info("Arrangement data have no items")
             entries.append(SimpleEntry(
-                date: Date(),
+                date: now,
                 currentWeek: currentWeekToStore,
                 arrangement: arrangement,
                 errorType: .none,
                 error: nil
-
             ))
         } else {
             logger.info("User wants today's arrangements, will remove occured arrangements")
-            for entryDate in entryDates {
+            // Entry for "now" so the widget is not blank before the first class.
+            entries.append(SimpleEntry(
+                date: now,
+                currentWeek: currentWeekToStore,
+                arrangement: arrangement.filter { $0.end_time > now },
+                errorType: .none,
+                error: nil
+            ))
+            for entryDate in entryDates where entryDate > now {
                 entries.append(SimpleEntry(
                     date: entryDate,
                     currentWeek: currentWeekToStore,
-                    arrangement: arrangement.filter{
-                        element in return element.end_time > entryDate
-                    },
+                    arrangement: arrangement.filter { $0.end_time > entryDate },
                     errorType: .none,
                     error: nil
                 ))
-                print("\(entries)")
             }
+            entries.sort { $0.date < $1.date }
         }
         
         logger.info("Updating timeline")
-        let timeline = Timeline(entries: entries, policy: .atEnd)
+        // Refresh at next local midnight so "today" / "tomorrow" stay correct overnight.
+        let reloadDate = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: now)
+        )
+        let policy: TimelineReloadPolicy = reloadDate.map { .after($0) } ?? .atEnd
+        let timeline = Timeline(entries: entries, policy: policy)
         completion(timeline)
     }
 }
@@ -515,12 +536,16 @@ struct ClasstableWidgetEntryView : View {
                             Color(hexString: "#314e7a")
                     )
             }
-            Text(entry.error ?? "No message about this error.")
+            if let detail = entry.error, !detail.isEmpty {
+                Text(detail)
                     .foregroundStyle(
                         colorScheme == .dark ? .white :
                             Color(hexString: "#314e7a")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                Spacer(minLength: 0)
+            }
         }.padding()
         
     }
@@ -534,7 +559,7 @@ struct ClasstableWidgetEntryView : View {
         
         if #available(iOS 17.0, macOS 13.0, tvOS 17.0, watchOS 10.0, *), IsTomorrowManager.value {
             logger.info("Will show tomorrow's arrangments")
-            day = calendar.date(byAdding: .day, value: 1, to: day)!
+            day = calendar.date(byAdding: .day, value: 1, to: day) ?? day
         }
         
         // Generate title screen
@@ -630,19 +655,24 @@ struct ClasstableWidget: Widget {
     let kind: String = "ClasstableWidget"
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: Provider()) { entry in
-            if #available(iOS 17.0, *) {
+        if #available(iOS 17.0, *) {
+            StaticConfiguration(kind: kind, provider: Provider()) { entry in
                 ClasstableWidgetEntryView(entry: entry)
                     .containerBackground(Color("WidgetBackground"), for: .widget)
-            } else {
+            }
+            .contentMarginsDisabled()
+            .configurationDisplayName(NSLocalizedString("widget_title", comment: "Widget Title"))
+            .description(NSLocalizedString("widget_description", comment: "Widget Description"))
+            .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        } else {
+            StaticConfiguration(kind: kind, provider: Provider()) { entry in
                 ClasstableWidgetEntryView(entry: entry)
                     .background(Color("WidgetBackground"))
             }
+            .configurationDisplayName(NSLocalizedString("widget_title", comment: "Widget Title"))
+            .description(NSLocalizedString("widget_description", comment: "Widget Description"))
+            .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         }
-        .contentMarginsDisabled()
-        .configurationDisplayName(NSLocalizedString("widget_title", comment: "Widget Title"))
-        .description(NSLocalizedString("widget_description", comment: "Widget Description"))
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 

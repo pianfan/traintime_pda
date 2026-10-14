@@ -21,6 +21,7 @@ import 'package:watermeter/repository/preference.dart' as prefs;
 import 'package:watermeter/model/xidian_ids/experiment.dart';
 import 'package:watermeter/repository/ids_session/ids_session.dart';
 import 'package:watermeter/repository/single_flight.dart';
+import 'package:watermeter/repository/widget_state_sync.dart';
 
 enum PhysicsCacheHint implements CacheHint {
   missingPassword,
@@ -102,6 +103,7 @@ class ExperimentSession {
         log.handle(e, s);
       }
     }
+    await reloadClassTableWidget();
   }
 
   (DateTime, List<ExperimentData>)? getCache() {

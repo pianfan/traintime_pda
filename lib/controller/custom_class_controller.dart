@@ -73,6 +73,8 @@ class CustomClassController {
         }
         return true;
       }).toList();
+      // Keep iOS App Group in sync even when nothing was edited this session.
+      _repository.syncToWidget(customClassesSignal.value);
       stateSignal.value = CustomClassState.fetched;
     } catch (e) {
       stateSignal.value = CustomClassState.error;

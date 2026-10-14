@@ -10,6 +10,7 @@ import 'package:watermeter/model/pda_service/custom_class.dart';
 import 'package:watermeter/repository/logger.dart';
 import 'package:watermeter/repository/network_client.dart';
 import 'package:watermeter/repository/preference.dart' as pref;
+import 'package:watermeter/repository/widget_state_sync.dart';
 
 class CustomClassRepository {
   static const String fileName = 'CustomClassesV2.json';
@@ -32,6 +33,12 @@ class CustomClassRepository {
     _syncToWidget(encoded);
   }
 
+  /// Push the current in-memory list to the iOS App Group without rewriting disk.
+  void syncToWidget(List<CustomClass> data) {
+    final encoded = jsonEncode(data.map((e) => e.toJson()).toList());
+    _syncToWidget(encoded);
+  }
+
   void delete() {
     if (file.existsSync()) {
       file.deleteSync();
@@ -45,11 +52,12 @@ class CustomClassRepository {
         .saveToGroupId(
           FileToGroupID(appid: pref.appId, fileName: fileName, data: data),
         )
-        .then((result) {
+        .then((result) async {
           log.info(
             "[CustomClassRepository][_syncToWidget] "
             "ios sync $fileName status: $result.",
           );
+          await reloadClassTableWidget();
         })
         .catchError((e, s) {
           log.handle(e, s);

@@ -26,21 +26,24 @@ class Subject : Codable {
     let place : String
     let seat : String?
     
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+    
     var startTime : Date {
         get {
-            let format : String = "yyyy-MM-dd HH:mm:ss"
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = format
-            return dateFormatter.date(from: startTimeStr) ?? Date(timeIntervalSince1970: 0)
+            return Self.dateFormatter.date(from: startTimeStr) ?? Date(timeIntervalSince1970: 0)
         }
     }
     
     var endTime : Date {
         get {
-            let format : String = "yyyy-MM-dd HH:mm:ss"
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateFormat = format
-            return dateFormatter.date(from: endTimeStr) ?? Date(timeIntervalSince1970: 0)
+            return Self.dateFormatter.date(from: endTimeStr) ?? Date(timeIntervalSince1970: 0)
         }
     }
     

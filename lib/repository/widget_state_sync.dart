@@ -5,11 +5,29 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:home_widget/home_widget.dart';
 
 import 'package:watermeter/bridge/save_to_groupid.g.dart';
 import 'package:watermeter/repository/logger.dart';
 import 'package:watermeter/repository/network_client.dart' show supportPath;
 import 'package:watermeter/repository/preference.dart' as preference;
+
+/// WidgetKit `kind` / Android Glance receiver for the classtable home widget.
+const String classTableWidgetKind = 'ClasstableWidget';
+const String classTableWidgetAndroidQualifiedName =
+    'io.github.benderblog.traintime_pda.widget.classtable.ClassTableWidgetReceiver';
+
+/// Ask the OS to rebuild the classtable home-screen widget timeline.
+Future<void> reloadClassTableWidget() async {
+  try {
+    await HomeWidget.updateWidget(
+      iOSName: classTableWidgetKind,
+      qualifiedAndroidName: classTableWidgetAndroidQualifiedName,
+    );
+  } catch (e, s) {
+    log.handle(e, s, '[widget_state_sync] Failed to reload classtable widget');
+  }
+}
 
 /// Delete all widget data files from the iOS App Group container.
 ///
@@ -22,7 +40,7 @@ Future<void> clearWidgetFiles() async {
   // Files written to the iOS App Group container by the main app.
   for (final fileName in [
     'ClassTable.json',
-    'UserClass.json',
+    'CustomClassesV2.json',
     'ExamFile.json',
     'WeekSwift.txt',
     'PhysicsExperiment.json',
@@ -41,6 +59,7 @@ Future<void> clearWidgetFiles() async {
       log.handle(e, s, '[widget_state_sync] Failed to delete $fileName');
     }
   }
+  await reloadClassTableWidget();
 }
 
 /// Write [WidgetState.json] so that the home-screen widget knows
@@ -89,4 +108,5 @@ Future<void> syncWidgetLoginState(bool loggedIn) async {
       );
     }
   }
+  await reloadClassTableWidget();
 }

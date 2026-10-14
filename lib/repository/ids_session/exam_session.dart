@@ -20,6 +20,7 @@ import 'package:watermeter/repository/network_client.dart';
 import 'package:watermeter/repository/preference.dart' as pref;
 import 'package:watermeter/repository/ids_session/ids_session.dart';
 import 'package:watermeter/repository/single_flight.dart';
+import 'package:watermeter/repository/widget_state_sync.dart';
 
 enum ExamCacheHint implements CacheHint {
   passwordWrong,
@@ -88,6 +89,7 @@ class ExamSession extends IDSSession {
         log.handle(e, s);
       }
     }
+    await reloadClassTableWidget();
   }
 
   (DateTime, ExamData)? getCache() {

@@ -9,10 +9,17 @@
 //
 
 import Foundation
+import WidgetKit
 
 // This extension of Error is required to do use FlutterError in any Swift code.
 extension FlutterError: Error {}
 struct AppIdFailedError: Error {}
+
+private let classTableWidgetKind = "ClasstableWidget"
+
+private func reloadClassTableWidgetTimelines() {
+    WidgetCenter.shared.reloadTimelines(ofKind: classTableWidgetKind)
+}
 
 // Sync classtable data to the public place...
 public class ApiImplementation: SaveToGroupIdSwiftApi {
@@ -58,6 +65,7 @@ public class ApiImplementation: SaveToGroupIdSwiftApi {
             }
 
             print("Write complete!")
+            reloadClassTableWidgetTimelines()
             completion(.success(true))
         } catch is AppIdFailedError {
             completion(.failure(FlutterError(
@@ -97,6 +105,7 @@ public class ApiImplementation: SaveToGroupIdSwiftApi {
                 print("File not found, skip: \(targetURL.path)")
             }
 
+            // Caller (e.g. clearWidgetFiles) reloads once after a batch of deletes.
             completion(.success(true))
         } catch is AppIdFailedError {
             completion(.failure(FlutterError(

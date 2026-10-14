@@ -23,22 +23,43 @@ class ExperimentData : Codable {
         case teacher
     }
 
+    private static let localDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"
+        return formatter
+    }()
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let isoFormatterNoFraction: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static func parseISO8601(_ string: String) -> Date? {
+        return Self.localDateFormatter.date(from: string)
+            ?? Self.isoFormatter.date(from: string)
+            ?? Self.isoFormatterNoFraction.date(from: string)
+    }
+
     var timeRanges: [(Date, Date)] {
         var toReturn: [(Date, Date)] = []
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"        
         for data in timeRangesMap {
-            let startTimeStr = data["$1"]
-            let stopTimeStr = data["$2"]
-            if startTimeStr == nil || stopTimeStr == nil {
+            guard let startTimeStr = data["$1"],
+                  let stopTimeStr = data["$2"],
+                  let startTime = Self.parseISO8601(startTimeStr),
+                  let stopTime = Self.parseISO8601(stopTimeStr) else {
                 continue
             }
-            let startTime = dateFormatter.date(from: startTimeStr!)
-            let stopTime = dateFormatter.date(from: stopTimeStr!)
-            if startTime == nil || stopTime == nil {
-                continue
-            }
-            toReturn.append((startTime!, stopTime!))
+            toReturn.append((startTime, stopTime))
         }
         return toReturn
     }

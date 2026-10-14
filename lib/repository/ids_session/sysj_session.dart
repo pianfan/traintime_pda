@@ -20,6 +20,7 @@ import 'package:watermeter/repository/network_client.dart';
 import 'package:watermeter/repository/preference.dart' as prefs;
 import 'package:watermeter/repository/ids_session/ids_session.dart';
 import 'package:watermeter/repository/single_flight.dart';
+import 'package:watermeter/repository/widget_state_sync.dart';
 
 enum OtherExperimentCacheHint implements CacheHint {
   loginFailed,
@@ -88,6 +89,7 @@ class SysjSession extends IDSSession {
         log.handle(e, s);
       }
     }
+    await reloadClassTableWidget();
   }
 
   (DateTime, List<ExperimentData>)? getCache() {
